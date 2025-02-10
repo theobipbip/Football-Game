@@ -1,0 +1,375 @@
+import pyxel
+import random
+import math
+
+SCREEN_WIDTH = 256
+SCREEN_HEIGHT = 192
+
+BALL_SPEED = 3.0
+PLAYER_SPEED = 2.0
+FRICTION = 0.98
+
+BALL_RADIUS = 4
+PLAYER_RADIUS = 5
+
+# Couleurs (en fonction de la palette Pyxel, voir la doc)
+TEAM_A_COLOR = 8    # Rouge
+TEAM_B_COLOR = 9    # Vert
+
+FIELD_MARGIN = 5
+
+# Touches de contrôle pour chaque équipe
+TEAM_A_KEYS = {
+    'up': pyxel.KEY_Z,
+    'down': pyxel.KEY_S,
+    'left': pyxel.KEY_Q,
+    'right': pyxel.KEY_D,
+    'pass': pyxel.KEY_ESCAPE,
+    'shoot': pyxel.KEY_E,
+    'select': pyxel.KEY_R  # Permet de changer le joueur contrôlé
+}
+
+TEAM_B_KEYS = {
+    'up': pyxel.KEY_UP,
+    'down': pyxel.KEY_DOWN,
+    'left': pyxel.KEY_LEFT,
+    'right': pyxel.KEY_RIGHT,
+    'pass': pyxel.KEY_K,
+    'shoot': pyxel.KEY_L,
+    'select': pyxel.KEY_O  # La touche O pour cycler
+}
+
+class Ball:
+    def __init__(self):
+        self.x = SCREEN_WIDTH // 2
+        self.y = SCREEN_HEIGHT // 2
+        self.vx = 0
+        self.vy = 0
+        self.radius = BALL_RADIUS
+
+    def update(self):
+        # Mise à jour de la position selon la vélocité
+        self.x += self.vx
+        self.y += self.vy
+
+        self.vx *= FRICTION
+        self.vy *= FRICTION
+
+        # Gestion des rebonds sur les bords du terrain
+        if self.x - self.radius < FIELD_MARGIN or self.x + self.radius > SCREEN_WIDTH - FIELD_MARGIN:
+            self.vx *= -0.7
+            # Correction de la position pour rester dans le terrain
+            self.x = max(self.radius + FIELD_MARGIN, min(self.x, SCREEN_WIDTH - self.radius - FIELD_MARGIN))
+        if self.y - self.radius < FIELD_MARGIN or self.y + self.radius > SCREEN_HEIGHT - FIELD_MARGIN:
+            self.vy *= -0.7
+            self.y = max(self.radius + FIELD_MARGIN, min(self.y, SCREEN_HEIGHT - self.radius - FIELD_MARGIN))
+
+    def draw(self):
+        pyxel.circ(self.x, self.y, self.radius, pyxel.COLOR_WHITE)
+
+class Player:
+    def __init__(self, x, y, team, keys=None, is_keeper=False, controlled=False):
+        self.x = x
+        self.y = y
+        self.team = team                # 'A' ou 'B'
+        self.keys = keys                # Si None, le joueur est en IA
+        self.is_keeper = is_keeper      # Gardien ou joueur de champ
+        self.controlled = controlled    # Si le joueur est contrôlé par l'humain
+        self.radius = PLAYER_RADIUS
+        self.has_ball = False
+        # Dernière direction de déplacement utile pour déterminer la direction de passe si aucune touche n'est pressé
+        self.facing = (0, 0)
+
+    def update(self, ball, teammates, opponents):
+        # Si le joueur est contrôlé,
+        if self.controlled and self.keys is not None:
+            self.handle_input(ball)
+        else:
+            # Sinon, l'IA prend le relais
+            self.ai_behavior(ball, teammates, opponents)
+
+        # collision joueur Terrain
+        self.x = max(FIELD_MARGIN + self.radius, min(self.x, SCREEN_WIDTH - FIELD_MARGIN - self.radius))
+        self.y = max(FIELD_MARGIN + self.radius, min(self.y, SCREEN_HEIGHT - FIELD_MARGIN - self.radius))
+
+        # Vérifier la collision avec la balle
+        distance = math.hypot(self.x - ball.x, self.y - ball.y)
+        if distance < self.radius + ball.radius:
+            self.has_ball = True
+            # La balle suit le joueur qui la contrôle
+            ball.x = self.x
+            ball.y = self.y
+        else:
+            self.has_ball = False
+
+    def handle_input(self, ball):
+        # Gestion des déplacements
+        dx = 0
+        dy = 0
+        if pyxel.btn(self.keys['left']):
+            dx -= PLAYER_SPEED
+        if pyxel.btn(self.keys['right']):
+            dx += PLAYER_SPEED
+        if pyxel.btn(self.keys['up']):
+            dy -= PLAYER_SPEED
+        if pyxel.btn(self.keys['down']):
+            dy += PLAYER_SPEED
+
+        # Mémoriser la direction de déplacement si une touche a été pressée
+        if dx != 0 or dy != 0:
+            self.facing = (dx, dy)
+
+        self.x += dx
+        self.y += dy
+
+        # Actions possibles si le joueur a la balle
+        if self.has_ball:
+            if pyxel.btnp(self.keys['pass']):
+                self.pass_ball(ball)
+            elif pyxel.btnp(self.keys['shoot']):
+                self.shoot_ball(ball)
+
+    def pass_ball(self, ball):
+        # Chercher le coéquipier le plus proche pour effectuer la passe
+        best_mate = None
+        best_dist = 1e9
+        for mate in game.teams[self.team].players:
+            if mate is not self:
+                d = math.hypot(mate.x - self.x, mate.y - self.y)
+                if d < best_dist:
+                    best_dist = d
+                    best_mate = mate
+        if best_mate is not None:
+            dx = best_mate.x - self.x
+            dy = best_mate.y - self.y
+            d = math.hypot(dx, dy)
+            if d != 0:
+                ball.vx = (dx / d) * BALL_SPEED * 1.2
+                ball.vy = (dy / d) * BALL_SPEED * 1.2
+        else:
+            # Si aucun coéquipier n'est trouvé, passer dans la direction de déplacement
+            fx, fy = self.facing
+            if fx == 0 and fy == 0:
+                fx, fy = (random.choice([-1, 1]), random.choice([-1, 1]))
+            ball.vx = fx * BALL_SPEED
+            ball.vy = fy * BALL_SPEED
+
+    def shoot_ball(self, ball):
+        # Tirer vers le but adverse
+        if self.team == 'A':
+            goal_x = SCREEN_WIDTH - FIELD_MARGIN - 5
+            goal_y = SCREEN_HEIGHT // 2
+        else:
+            goal_x = FIELD_MARGIN + 5
+            goal_y = SCREEN_HEIGHT // 2
+        dx = goal_x - self.x
+        dy = goal_y - self.y
+        d = math.hypot(dx, dy)
+        if d != 0:
+            ball.vx = (dx / d) * BALL_SPEED * 1.5
+            ball.vy = (dy / d) * BALL_SPEED * 1.5
+
+    def ai_behavior(self, ball, teammates, opponents):
+        # Comportement de base pour l'IA
+        if self.is_keeper:
+            # Le gardien reste près du but
+            if self.team == 'A':
+                target_x = FIELD_MARGIN + 10
+                target_y = SCREEN_HEIGHT // 2
+            else:
+                target_x = SCREEN_WIDTH - FIELD_MARGIN - 10
+                target_y = SCREEN_HEIGHT // 2
+        else:
+            # Pour les joueurs de champ, s'ils sont dans leur moitié et la balle est proche, aller vers la balle
+            if self.team == 'A':
+                if ball.x < SCREEN_WIDTH // 2:
+                    target_x = ball.x
+                    target_y = ball.y
+                else:
+                    target_x = self.x + random.choice([-1, 0, 1]) * PLAYER_SPEED
+                    target_y = self.y + random.choice([-1, 0, 1]) * PLAYER_SPEED
+            else:
+                if ball.x > SCREEN_WIDTH // 2:
+                    target_x = ball.x
+                    target_y = ball.y
+                else:
+                    target_x = self.x + random.choice([-1, 0, 1]) * PLAYER_SPEED
+                    target_y = self.y + random.choice([-1, 0, 1]) * PLAYER_SPEED
+
+        # Se déplacer en douceur vers la cible
+        angle = math.atan2(target_y - self.y, target_x - self.x)
+        self.x += math.cos(angle) * PLAYER_SPEED * 0.5
+        self.y += math.sin(angle) * PLAYER_SPEED * 0.5
+
+    def draw(self):
+        # Couleur en fonction de l'équipe
+        color = TEAM_A_COLOR if self.team == 'A' else TEAM_B_COLOR
+        pyxel.circ(self.x, self.y, self.radius, color)
+        # Surligner le joueur contrôlé
+        if self.controlled:
+            pyxel.circb(self.x, self.y, self.radius + 2, pyxel.COLOR_YELLOW)
+        # Indiquer la possession de la balle
+        if self.has_ball:
+            pyxel.circ(self.x, self.y, self.radius - 2, pyxel.COLOR_WHITE)
+
+class Team:
+    def __init__(self, team, keys):
+        self.team = team  # 'A' ou 'B'
+        self.keys = keys
+        self.players = []
+        self.selected_index = 0  # Indice du joueur actuellement contrôlé
+
+    def add_player(self, player):
+        self.players.append(player)
+
+    def cycle_player(self):
+        # Change le joueur contrôlé
+        self.selected_index = (self.selected_index + 1) % len(self.players)
+        for i, player in enumerate(self.players):
+            # Seul le joueur à l'indice selected_index est contrôlé par l'humain
+            player.controlled = (i == self.selected_index)
+            # Assigner les touches uniquement au joueur contrôlé
+            if player.controlled:
+                player.keys = self.keys
+            else:
+                player.keys = None
+
+    def update_selection(self):
+        # Détecter l'appui sur la touche de sélection pour changer le joueur
+        if pyxel.btnp(self.keys['select']):
+            self.cycle_player()
+
+    def draw_players(self):
+        for player in self.players:
+            player.draw()
+
+class Game:
+    def __init__(self):
+        pyxel.init(SCREEN_WIDTH, SCREEN_HEIGHT, title="Pyxel Football")
+        self.ball = Ball()
+
+        # Création des équipes
+        self.teams = {}
+        self.teams['A'] = Team('A', TEAM_A_KEYS)
+        self.teams['B'] = Team('B', TEAM_B_KEYS)
+
+        self.teams['A'].add_player(Player(30, 50, 'A', TEAM_A_KEYS, controlled=True))
+        self.teams['A'].add_player(Player(50, 70, 'A'))
+        self.teams['A'].add_player(Player(30, 100, 'A'))
+        self.teams['A'].add_player(Player(50, 130, 'A'))
+        self.teams['A'].add_player(Player(10, 90, 'A', is_keeper=True))
+
+        self.teams['B'].add_player(Player(220, 50, 'B', TEAM_B_KEYS, controlled=True))
+        self.teams['B'].add_player(Player(200, 70, 'B'))
+        self.teams['B'].add_player(Player(220, 100, 'B'))
+        self.teams['B'].add_player(Player(200, 130, 'B'))
+        self.teams['B'].add_player(Player(240, 90, 'B', is_keeper=True))
+
+        self.score = {'A': 0, 'B': 0}
+        self.selected_team = None  # État de sélection d'équipe
+
+        # Démarrer la boucle de jeu
+        pyxel.run(self.update, self.draw)
+
+    def update(self):
+        if self.selected_team is None:
+            self.update_team_selection()
+        else:
+            # Permet à chaque équipe de mettre à jour le joueur contrôlé
+            self.teams['A'].update_selection()
+            self.teams['B'].update_selection()
+
+            # Mettre à jour chaque joueur (contrôlé ou IA)
+            for team in self.teams.values():
+                for player in team.players:
+                    # Séparer les coéquipiers et adversaires
+                    teammates = team.players
+                    opponents = self.teams['B'].players if team.team == 'A' else self.teams['A'].players
+                    player.update(self.ball, teammates, opponents)
+
+            # Mise à jour de la balle
+            self.ball.update()
+
+            # Vérification du but (lorsque la balle traverse les zones de but)
+            if self.ball.x - self.ball.radius < FIELD_MARGIN:
+                # But pour l'équipe B
+                self.score['B'] += 1
+                self.reset_positions(scoring_team='B')
+            elif self.ball.x + self.ball.radius > SCREEN_WIDTH - FIELD_MARGIN:
+                # But pour l'équipe A
+                self.score['A'] += 1
+                self.reset_positions(scoring_team='A')
+
+    def update_team_selection(self):
+        if pyxel.btnp(pyxel.KEY_A):
+            self.selected_team = 'A'
+        elif pyxel.btnp(pyxel.KEY_B):
+            self.selected_team = 'B'
+
+    def reset_positions(self, scoring_team):
+        # Réinitialisation de la balle au centre
+        self.ball.x = SCREEN_WIDTH // 2
+        self.ball.y = SCREEN_HEIGHT // 2
+        self.ball.vx = 0
+        self.ball.vy = 0
+
+        # Réinitialisation des positions pour l'équipe A
+        self.teams['A'].players[0].x, self.teams['A'].players[0].y = 30, 50
+        self.teams['A'].players[1].x, self.teams['A'].players[1].y = 50, 70
+        self.teams['A'].players[2].x, self.teams['A'].players[2].y = 30, 100
+        self.teams['A'].players[3].x, self.teams['A'].players[3].y = 50, 130
+        self.teams['A'].players[4].x, self.teams['A'].players[4].y = 10, 90  # Gardien
+
+        # Réinitialisation des positions pour l'équipe B
+        self.teams['B'].players[0].x, self.teams['B'].players[0].y = 220, 50
+        self.teams['B'].players[1].x, self.teams['B'].players[1].y = 200, 70
+        self.teams['B'].players[2].x, self.teams['B'].players[2].y = 220, 100
+        self.teams['B'].players[3].x, self.teams['B'].players[3].y = 200, 130
+        self.teams['B'].players[4].x, self.teams['B'].players[4].y = 240, 90  # Gardien
+
+    def draw_field(self):
+        # Fond et terrain de jeu
+        pyxel.cls(11)  
+        pyxel.rect(FIELD_MARGIN, FIELD_MARGIN, SCREEN_WIDTH - 2 * FIELD_MARGIN, SCREEN_HEIGHT - 2 * FIELD_MARGIN, pyxel.COLOR_GREEN)
+        pyxel.rectb(FIELD_MARGIN, FIELD_MARGIN, SCREEN_WIDTH - 2 * FIELD_MARGIN, SCREEN_HEIGHT - 2 * FIELD_MARGIN, pyxel.COLOR_WHITE)
+
+    def draw(self):
+        if self.selected_team is None:
+            self.draw_team_selection()
+        else:
+            # Dessiner le terrain
+            self.draw_field()
+
+            # Ligne médiane
+            pyxel.line(SCREEN_WIDTH // 2, FIELD_MARGIN, SCREEN_WIDTH // 2, SCREEN_HEIGHT - FIELD_MARGIN, pyxel.COLOR_WHITE)
+            # Zones de but (représentation simplifiée)
+            pyxel.rect(0, SCREEN_HEIGHT // 2 - 15, FIELD_MARGIN, 30, pyxel.COLOR_GRAY)
+            pyxel.rect(SCREEN_WIDTH - FIELD_MARGIN, SCREEN_HEIGHT // 2 - 15, FIELD_MARGIN, 30, pyxel.COLOR_GRAY)
+
+            # Dessiner les joueurs et la balle
+            self.teams['A'].draw_players()
+            self.teams['B'].draw_players()
+            self.ball.draw()
+
+            # Afficher le score
+            score_text = f"Team A: {self.score['A']}   Team B: {self.score['B']}"
+            pyxel.text(SCREEN_WIDTH // 2 - 40, 10, score_text, pyxel.COLOR_YELLOW)
+
+    def draw_team_selection(self):
+        pyxel.cls(pyxel.COLOR_BLACK)
+        pyxel.text(SCREEN_WIDTH // 2 - 40, SCREEN_HEIGHT // 2 - 10, "Select Team", pyxel.COLOR_WHITE)
+        pyxel.text(SCREEN_WIDTH // 2 - 40, SCREEN_HEIGHT // 2, "Press A for Team A", pyxel.COLOR_RED)
+        pyxel.text(SCREEN_WIDTH // 2 - 40, SCREEN_HEIGHT // 2 + 10, "Press B for Team B", pyxel.COLOR_GREEN)
+
+# ATTENTION Variable globale pour permettre à la méthode pass_ball d'accéder au jeu
+game = None
+
+def main():
+    global game
+    game = Game()
+
+if __name__ == "__main__":
+    main()
+
+
+
