@@ -415,10 +415,10 @@ class Game:
         pyxel.run(self.update, self.draw)
 
     def handle_team_selection(self):
-        if pyxel.btnp(pyxel.KEY_1):
+        if pyxel.btnp(BUTTON_A):
             self.selected_team = 'A'
             self.setup_teams()
-        elif pyxel.btnp(pyxel.KEY_2):
+        elif pyxel.btnp(BUTTON_B):
             self.selected_team = 'B'
             self.setup_teams()
 
@@ -493,8 +493,8 @@ class Game:
         if self.selected_team is None:
             pyxel.cls(pyxel.COLOR_BLACK)
             pyxel.text(50, 80, "Choisissez votre equipe:", pyxel.COLOR_WHITE)
-            pyxel.text(50, 100, "Appuyez sur 1 pour l'equipe A", pyxel.COLOR_CYAN)
-            pyxel.text(50, 120, "Appuyez sur 2 pour l'equipe B", pyxel.COLOR_RED)
+            pyxel.text(50, 100, "Appuyez sur A de la manette pour l'equipe A", pyxel.COLOR_CYAN)
+            pyxel.text(50, 120, "Appuyez sur B de la manette pour l'equipe B", pyxel.COLOR_RED)
         else:
             self.draw_field()
             self.ball.draw()
